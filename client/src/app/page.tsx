@@ -29,6 +29,13 @@ export default function Home() {
       try {
         setError("");
 
+        // Valida se o token existe antes de buscar os dados
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        if (!token) {
+          window.location.href = "/login";
+          return;
+        }
+
         const projects = await getProjects();
         const taskGroups = await Promise.all(
           projects.map((project) => getTasks(project.id)),
@@ -36,10 +43,17 @@ export default function Home() {
         const tasks = taskGroups.flat();
 
         setData({ projects, tasks });
-      } catch (error) {
+      } catch (err) {
+        // Se o token for inválido/expirado (401), limpa e redireciona para o login
+        if (err instanceof Error && err.message.includes("401")) {
+          localStorage.removeItem("token");
+          window.location.href = "/login";
+          return;
+        }
+
         setError(
-          error instanceof Error
-            ? error.message
+          err instanceof Error
+            ? err.message
             : "Could not load the dashboard",
         );
       } finally {

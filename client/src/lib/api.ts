@@ -91,7 +91,11 @@ export async function registerUser(input: { name?: string; email: string; passwo
 
   if (response.token && typeof window !== "undefined") {
     localStorage.setItem("token", response.token);
-    localStorage.setItem("user", JSON.stringify(response.user));
+    if (response.user) {
+      localStorage.setItem("user", JSON.stringify(response.user));
+    }
+    // Notifica imediatamente qualquer componente ouvindo (como a Sidebar)
+    window.dispatchEvent(new Event("auth-change"));
   }
 
   return response;
@@ -105,7 +109,11 @@ export async function loginUser(input: { email: string; password: string }) {
 
   if (response.token && typeof window !== "undefined") {
     localStorage.setItem("token", response.token);
-    localStorage.setItem("user", JSON.stringify(response.user));
+    if (response.user) {
+      localStorage.setItem("user", JSON.stringify(response.user));
+    }
+    // Notifica imediatamente qualquer componente ouvindo (como a Sidebar)
+    window.dispatchEvent(new Event("auth-change"));
   }
 
   return response;
@@ -115,6 +123,7 @@ export function logoutUser() {
   if (typeof window !== "undefined") {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+    window.dispatchEvent(new Event("auth-change"));
   }
 }
 
