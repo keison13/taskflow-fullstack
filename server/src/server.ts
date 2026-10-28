@@ -4,38 +4,9 @@ import express, {
 } from "express";
 import cors from "cors";
 import "dotenv/config";
-import { prisma } from "./lib/prisma.ts";
-
-
-type Project = {
-  id: number;
-  name: string;
-  description: string;
-};
-
-let projects: Project[] = [
-  {
-    id: 1,
-    name: "Course Platform",
-    description: "Build the TaskFlow course project",
-  },
-  {
-    id: 2,
-    name: "Marketing Website",
-    description: "Create the public product website",
-  },
-];
-
-let nextProjectId = 3;
-
-declare global {
-  namespace Express {
-    interface Request {
-      userId?: number;
-    }
-  }
-}
-
+import { prisma } from "./lib/prisma.js";
+import authRoutes from "./routes/authRoutes.js";
+import { authMiddleware, type AuthRequest } from "./middlewares/authMiddleware.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 5000;
@@ -54,25 +25,37 @@ app.use(
 );
 app.use(express.json());
 
+// Rotas de Autenticação (Públicas)
+app.use("/api/auth", authRoutes);
+
 app.get("/api/health", (_request, response) => {
   response.json({ message: "TaskFlow API is running" });
 });
 
-const getProjects: RequestHandler = async (request, response) => {
+// ==========================================
+// ROTAS DE PROJETOS (Protegidas por Auth)
+// ==========================================
+
+const getProjects: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const search =
     typeof request.query.search === "string"
       ? request.query.search.trim()
       : "";
 
   const projects = await prisma.project.findMany({
-    where: search
-      ? {
-          name: {
-            contains: search,
-            mode: "insensitive",
-          },
-        }
-      : undefined,
+    where: {
+      userId,
+      ...(search
+        ? {
+            name: {
+              contains: search,
+              mode: "insensitive" as const,
+            },
+          }
+        : {}),
+    },
     orderBy: {
       createdAt: "desc",
     },
@@ -81,8 +64,9 @@ const getProjects: RequestHandler = async (request, response) => {
   response.json({ data: projects });
 };
 
-
-const getProjectById: RequestHandler = async (request, response) => {
+const getProjectById: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const id = Number(request.params.id);
 
   if (!Number.isInteger(id)) {
@@ -90,8 +74,8 @@ const getProjectById: RequestHandler = async (request, response) => {
     return;
   }
 
-  const project = await prisma.project.findUnique({
-    where: { id },
+  const project = await prisma.project.findFirst({
+    where: { id, userId },
   });
 
   if (!project) {
@@ -102,8 +86,9 @@ const getProjectById: RequestHandler = async (request, response) => {
   response.json({ data: project });
 };
 
-
-const createProject: RequestHandler = async (request, response) => {
+const createProject: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const body = request.body as
     | { name?: unknown; description?: unknown }
     | undefined;
@@ -113,21 +98,53 @@ const createProject: RequestHandler = async (request, response) => {
     return;
   }
 
-   const project = await prisma.project.create({
+  const project = await prisma.project.create({
     data: {
       name: body.name.trim(),
       description:
         typeof body.description === "string"
           ? body.description.trim()
           : "",
+      userId: userId!,
     },
   });
 
   response.status(201).json({ data: project });
-
 };
 
-const getTasks: RequestHandler = async (request, response) => {
+const deleteProject: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
+  const id = Number(request.params.id);
+
+  if (!Number.isInteger(id)) {
+    response.status(404).json({ message: "Project not found" });
+    return;
+  }
+
+  const project = await prisma.project.findFirst({
+    where: { id, userId },
+  });
+
+  if (!project) {
+    response.status(404).json({ message: "Project not found" });
+    return;
+  }
+
+  await prisma.project.delete({
+    where: { id },
+  });
+
+  response.status(204).send();
+};
+
+// ==========================================
+// ROTAS DE TAREFAS (Tasks - Protegidas)
+// ==========================================
+
+const getTasks: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const projectId = Number(request.params.projectId);
 
   if (!Number.isInteger(projectId)) {
@@ -135,8 +152,8 @@ const getTasks: RequestHandler = async (request, response) => {
     return;
   }
 
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, userId },
     include: {
       tasks: {
         orderBy: {
@@ -154,7 +171,9 @@ const getTasks: RequestHandler = async (request, response) => {
   response.json({ data: project.tasks });
 };
 
-const createTask: RequestHandler = async (request, response) => {
+const createTask: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const projectId = Number(request.params.projectId);
   const body = request.body as { title?: unknown } | undefined;
 
@@ -168,8 +187,8 @@ const createTask: RequestHandler = async (request, response) => {
     return;
   }
 
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, userId },
     select: { id: true },
   });
 
@@ -188,7 +207,9 @@ const createTask: RequestHandler = async (request, response) => {
   response.status(201).json({ data: task });
 };
 
-const updateTaskCompletion: RequestHandler = async (request, response) => {
+const updateTaskCompletion: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const id = Number(request.params.id);
   const body = request.body as { completed?: unknown } | undefined;
 
@@ -204,10 +225,10 @@ const updateTaskCompletion: RequestHandler = async (request, response) => {
 
   const existingTask = await prisma.task.findUnique({
     where: { id },
-    select: { id: true },
+    include: { project: true },
   });
 
-  if (!existingTask) {
+  if (!existingTask || existingTask.project.userId !== userId) {
     response.status(404).json({ message: "Task not found" });
     return;
   }
@@ -222,7 +243,9 @@ const updateTaskCompletion: RequestHandler = async (request, response) => {
   response.json({ data: task });
 };
 
-const deleteTask: RequestHandler = async (request, response) => {
+const deleteTask: RequestHandler = async (req, response) => {
+  const request = req as AuthRequest;
+  const userId = request.userId;
   const id = Number(request.params.id);
 
   if (!Number.isInteger(id)) {
@@ -230,32 +253,36 @@ const deleteTask: RequestHandler = async (request, response) => {
     return;
   }
 
-  const result = await prisma.task.deleteMany({
+  const existingTask = await prisma.task.findUnique({
     where: { id },
+    include: { project: true },
   });
 
-  if (result.count === 0) {
+  if (!existingTask || existingTask.project.userId !== userId) {
     response.status(404).json({ message: "Task not found" });
     return;
   }
 
+  await prisma.task.delete({
+    where: { id },
+  });
+
   response.status(204).send();
 };
 
-app.get("/api/health", (_request, response) => {
-  response.json({ status: "ok" });
-});
+// ==========================================
+// REGISTRO DAS ROTAS COM O AUTH MIDDLEWARE
+// ==========================================
 
+app.get("/api/projects", authMiddleware, getProjects);
+app.get("/api/projects/:id", authMiddleware, getProjectById);
+app.post("/api/projects", authMiddleware, createProject);
+app.delete("/api/projects/:id", authMiddleware, deleteProject);
 
-app.get("/api/projects", getProjects);
-app.get("/api/projects/:id", getProjectById);
-app.post("/api/projects", createProject);
-
-app.get("/api/projects/:projectId/tasks", getTasks);
-app.post("/api/projects/:projectId/tasks", createTask);
-app.patch("/api/tasks/:id", updateTaskCompletion);
-app.delete("/api/tasks/:id", deleteTask);
-
+app.get("/api/projects/:projectId/tasks", authMiddleware, getTasks);
+app.post("/api/projects/:projectId/tasks", authMiddleware, createTask);
+app.patch("/api/tasks/:id", authMiddleware, updateTaskCompletion);
+app.delete("/api/tasks/:id", authMiddleware, deleteTask);
 
 app.use((request, response) => {
   response.status(404).json({
@@ -275,8 +302,6 @@ const errorHandler: ErrorRequestHandler = (
 
 app.use(errorHandler);
 
-
 app.listen(port, "0.0.0.0", () => {
   console.log(`API running on port ${port}`);
 });
-
