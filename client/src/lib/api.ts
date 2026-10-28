@@ -1,3 +1,15 @@
+export type User = {
+  id: number;
+  name: string | null;
+  email: string;
+};
+
+export type AuthResponse = {
+  message: string;
+  token: string;
+  user: User;
+};
+
 export type Project = {
   id: number;
   name: string;
@@ -10,7 +22,6 @@ export type CreateProjectInput = {
   name: string;
   description: string;
 };
-
 
 export type Task = {
   id: number;
@@ -27,6 +38,7 @@ type ApiResponse<T> = {
 
 type ErrorResponse = {
   message?: string;
+  error?: string;
 };
 
 const API_URL =
@@ -39,6 +51,14 @@ async function apiRequest<T>(
   const headers = new Headers(options?.headers);
   headers.set("Content-Type", "application/json");
 
+  // Se estiver no navegador, tenta resgatar o token JWT do localStorage e injetar na requisição
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("token");
+    if (token) {
+      headers.set("Authorization", `Bearer ${token}`);
+    }
+  }
+
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers,
@@ -49,7 +69,7 @@ async function apiRequest<T>(
       | ErrorResponse
       | null;
 
-    throw new Error(error?.message ?? "Request failed");
+    throw new Error(error?.message ?? error?.error ?? "Request failed");
   }
 
   if (response.status === 204) {
@@ -58,6 +78,49 @@ async function apiRequest<T>(
 
   return response.json() as Promise<T>;
 }
+
+// ==========================================
+// ROTAS DE AUTENTICAÇÃO (Auth)
+// ==========================================
+
+export async function registerUser(input: { name?: string; email: string; password: string }) {
+  const response = await apiRequest<AuthResponse>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+  if (response.token && typeof window !== "undefined") {
+    localStorage.setItem("token", response.token);
+    localStorage.setItem("user", JSON.stringify(response.user));
+  }
+
+  return response;
+}
+
+export async function loginUser(input: { email: string; password: string }) {
+  const response = await apiRequest<AuthResponse>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+
+  if (response.token && typeof window !== "undefined") {
+    localStorage.setItem("token", response.token);
+    localStorage.setItem("user", JSON.stringify(response.user));
+  }
+
+  return response;
+}
+
+export function logoutUser() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+  }
+}
+
+// ==========================================
+// ROTAS DE PROJETOS E TAREFAS (Protegidas)
+// ==========================================
 
 export async function getProjects() {
   const response = await apiRequest<ApiResponse<Project[]>>(
@@ -79,6 +142,11 @@ export async function createProject(input: CreateProjectInput) {
   return response.data;
 }
 
+export async function deleteProject(projectId: number) {
+  return apiRequest<void>(`/api/projects/${projectId}`, {
+    method: "DELETE",
+  });
+}
 
 export async function getTasks(projectId: number) {
   const response = await apiRequest<ApiResponse<Task[]>>(
